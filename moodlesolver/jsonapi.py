@@ -28,8 +28,9 @@ def _qtype(st):
     return 'unknown'
 
 class JsonAPI:
-
-    def __init__(self, quiz_api, on_ocr=None, image_mode='b64', image_base_url=None):
+    def __init__(self, quiz_api, on_ocr=None, image_mode='b64',
+                 image_base_url=None, ai_preview=False,
+                 ai_model=None):
         self.q = quiz_api
         if on_ocr is None:
             from .vision import make_on_ocr
@@ -37,6 +38,9 @@ class JsonAPI:
         self.on_ocr = on_ocr
         self.image_mode = image_mode
         self.image_base_url = image_base_url
+        self.ai = bool(ai_preview)
+        from .aipreview import OC_DEFAULT_MODEL
+        self.ai_model = ai_model or OC_DEFAULT_MODEL
 
     async def handle(self, command):
         c = json.loads(command) if isinstance(command, str) else command
@@ -78,8 +82,6 @@ class JsonAPI:
         return v
 
     async def _ocr_preview(self, st):
-        if not self.on_ocr:
-            return None
         import asyncio as aio
         files = []
         if st.get('question_image_file'):
@@ -88,6 +90,7 @@ class JsonAPI:
             files.append((f, f))
         if not files:
             return None
+        from .vision import _resolve
 
         async def one(name, f):
             ru, en, formula = await aio.gather(aio.to_thread(self.on_ocr, f, 'текст русский'), aio.to_thread(self.on_ocr, f, 'text english'), aio.to_thread(self.on_ocr, f, 'формула'), return_exceptions=True)
@@ -102,6 +105,16 @@ class JsonAPI:
                 out.setdefault('errors', []).append(str(p)[:60])
             else:
                 out[p[0]] = p[1]
+        if self.ai:
+            try:
+                from .aipreview import ai_preview
+                paths = [_resolve(f) for _, f in files]
+                text = await aio.to_thread(ai_preview, paths,
+                                           model=self.ai_model)
+                if text:
+                    out['ai_preview'] = text[:2000]
+            except Exception:
+                pass
         return out or None
 
     async def _select(self, c):

@@ -63,7 +63,12 @@ asyncio.run(main())
 Каждый ответ содержит: `page`, `question`, `question_hash`, `qtype`, `options`, `checked` (что реально отмечено на сервере), `selects`, `text_inputs`, `timeleft`, `buttons`, а также:
 
 - `question_image_b64` / `option_images_b64` — картинки в base64 (или ссылки при `image_mode="url"`)
-- `ocr` — локальное превью каждой картинки: `{"formula": "…", "ru": "…", "en": "…"}`
+- `ocr` — локальное превью каждой картинки: `{"formula": "…", "ru": "…", "en": "…"}`, а при `ai_preview=True` ещё `ai_preview` — описание картинок vision-моделью OpenCode (mimo-v2.6-flash-free по умолчанию)
+
+```python
+api = JsonAPI(q, ai_preview=True)          # включить AI-описание картинок
+api = JsonAPI(q, ai_preview=True, ai_model="opencode/longcat-2.5-preview-free")
+```
 
 Подробная схема: `moodlesolver/schema/quiz_protocol.json`.
 
