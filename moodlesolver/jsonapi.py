@@ -174,9 +174,24 @@ class JsonAPI:
         st = await self.q.get_state() or {}
         if not (st.get('checked') or st.get('text_inputs') or st.get('selects')):
             return err('E_NOTHING_CHECKED', page=self._page(st), question=st.get('question'))
-        t = self.q.m.pick_tab_nowait('attempt.php') if hasattr(self.q.m, 'pick_tab_nowait') else None
-        fin = await self.q.m.tab.evaluate("(async () => { const n = document.querySelector('input[name=finishattempt], input[name=next]'); if (n) { n.click(); return n.name; } return 'nobtn'; })()")
-        await asyncio.sleep(5)
+        t = await self.q._tab()
+        u0 = st.get('url') or ''
+        fin = await t.evaluate("(async () => { const n = document.querySelector('input[name=finishattempt], input[name=next]'); if (n) { n.click(); return n.name; } return 'nobtn'; })()")
+        for _ in range(15):
+            await asyncio.sleep(1)
+            u = await t.url()
+            if u != u0 and '[object' not in u and 'summary.php' in (u or ''):
+                break
+            if u != u0 and '[object' not in u:
+                break
+        u = await t.url()
+        if u == u0 or '[object' in (u or ''):
+            from .ctx import CtxAPI
+            mm = re.search('cmid=(\d+)', u0)
+            if mm:
+                r = await CtxAPI(self.q.m).resume_attempt(int(mm.group(1)))
+                if r.get('ok'):
+                    t = self.q.m.tab
         st2 = await self.q.get_state() or {}
         if not st2.get('question'):
             st2 = await self._resume() or {}

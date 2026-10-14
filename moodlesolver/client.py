@@ -101,11 +101,17 @@ class AsyncTab:
 
     async def next_page(self):
         u0 = await self.url()
+        h0 = await self.evaluate("(() => { const q = document.querySelector('.qtext'); return q ? q.innerText.trim().slice(0, 80) : ''; })()")
+        h0 = (h0.get('result') or '')
         await self.evaluate("(() => { const n = document.querySelector('input[name=next]') || document.querySelector('input[name=finishattempt]'); if (n) n.click(); return n ? 'ok' : 'nonext'; })()")
-        for _ in range(10):
+        for _ in range(12):
             await asyncio.sleep(1)
             u = await self.url()
+            h = await self.evaluate("(() => { const q = document.querySelector('.qtext'); return q ? q.innerText.trim().slice(0, 80) : ''; })()")
+            h = (h.get('result') or '')
             if u != u0 and '[object' not in u:
+                return u
+            if h and h != h0 and u == u0 and '[object' not in u:
                 return u
         return u0
 
@@ -297,10 +303,10 @@ class AsyncMoodle:
 
     async def dump_question(self, q, quiz_id):
         rec = {'n': q['number'], 'text': q['text'], 'options': [o['label'] for o in q['options']], 'multi': q['multi'], 'timer': q['timer']}
-        p = await self.download_image(f'{self.dumps_dir}/q{quiz_id}_n{q['number']}.jpg')
+        p = await self.download_image('%s/q%s_n%s.jpg' % (self.dumps_dir, quiz_id, q['number']))
         if p:
             rec['image'] = p
-        self.dump(f'q{quiz_id}_n{q['number']}.json', rec)
+        self.dump("q%s_n%s.json" % (quiz_id, q['number']), rec)
         return rec
 
     async def answer_step(self, labels, tab=None):

@@ -73,17 +73,18 @@ class QuizAPI:
             st['option_images_b64'] = arr2
         return st
 
-    async def set_answer(self, label=None, index=None, labels=None):
+    async def set_answer(self, label=None, index=None, labels=None, checked=None):
         t = await self._tab()
-        if index is not None:
-            r2 = await t.click_answer(index)
-            return {'clicked': 1 if r2 == 'ok' else 0}
         wants = labels if labels else [label] if label else []
-        r = await t.evaluate("(async () => { const ins = [...document.querySelectorAll('.answer input[type=radio], .answer input[type=checkbox]')]; const wants = " + json.dumps([w.lower() for w in wants]) + "; let n = 0; const norm = s => (s || '').replace(/[\\s\\xa0\\u200b\\u200c]+/g, ' ') .trim().toLowerCase(); for (const w of wants) {  const wn = norm(w);  let e = ins.find(x => norm(x.parentElement.textContent) === wn);  if (!e) e = ins.find(x => norm(x.parentElement.textContent)   .startsWith(wn.slice(0, 25)));  if (e && !e.checked) { e.click(); n++; } } return JSON.stringify({clicked: n}); })()")
-        if wants or index is None:
+        if wants:
+            set_mark = 'true' if checked is not False else 'false'
+            r = await t.evaluate("(async () => { const ins = [...document.querySelectorAll('.answer input[type=radio], .answer input[type=checkbox]')]; const wants = " + json.dumps([w.lower() for w in wants]) + "; const setTo = " + set_mark + "; let n = 0; const norm = s => (s || '').replace(/[\\s\\xa0\\u200b\\u200c]+/g, ' ') .trim().toLowerCase(); for (const w of wants) {  const wn = norm(w);  let e = ins.find(x => norm(x.parentElement.textContent) === wn);  if (!e) e = ins.find(x => norm(x.parentElement.textContent)   .startsWith(wn.slice(0, 25)));  if (e) { if (e.type === 'checkbox' && e.checked !== setTo) { e.click(); } else if (e.type === 'radio' && !e.checked) { e.click(); } if (e.type === 'radio' || e.checked === setTo) n++; } } return JSON.stringify({clicked: n}); })()")
             return json.loads(r.get('result') or '{}')
-        r2 = await t.click_answer(index)
-        return {'clicked': 1 if r2 == 'ok' else 0}
+        if index is not None:
+            set_mark = 'true' if checked is not False else 'false'
+            r2 = await t.evaluate(f"(() => {{ const ins = document.querySelectorAll('.answer input[type=radio], .answer input[type=checkbox]'); if (!ins[{index}]) return 'nobtn'; const e = ins[{index}]; if (e.type === 'checkbox') {{ const want = {set_mark}; if (e.checked !== want) e.click(); return e.checked === want ? 'ok' : 'fail'; }} if (e.checked) return 'ok'; e.click(); return e.checked ? 'ok' : 'fail'; }})()")
+            return {'clicked': 1 if r2 == 'ok' else 0}
+        return {'clicked': 0}
 
     async def set_text(self, text, index=0):
         t = await self._tab()
