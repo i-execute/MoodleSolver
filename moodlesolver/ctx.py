@@ -95,13 +95,13 @@ class CtxAPI:
         d['files'] = []
         if with_resources:
             for r in d['resources']:
-                p = f'res_{r['cmid']}.bin'
+                p = f"res_{r['cmid']}.bin"
                 try:
                     got = await self.download_resource(r['cmid'], p)
                     if got.get('file'):
                         d['files'].append(got['file'])
                 except Exception as e:
-                    d['files'].append(f'error:{r['cmid']}:{str(e)[:40]}')
+                    d['files'].append("error:%s:%s" % (r['cmid'], str(e)[:40]))
         p = path or f'course_{course_id}.json'
         with open(p, 'w') as f:
             json.dump(d, f, ensure_ascii=False, indent=1)
@@ -124,3 +124,31 @@ class CtxAPI:
 
     async def search_courses(self, query):
         return [c for c in await self.get_courses() if query.lower() in c['name'].lower()]
+
+    async def get_guide(self, quiz_cmid, path=None):
+        return await self._get_guide(quiz_cmid, path)
+
+    async def _get_guide(self, quiz_cmid, path=None):
+        for course in await self.get_courses():
+            secs = await self.get_course_sections(course['id'])
+            for s in secs:
+                names = [i for i in s.get('items', [])]
+                quiz = next((i for i in names if i.get('cmid') == str(quiz_cmid)), None)
+                if not quiz:
+                    continue
+                import re as _re
+                m = _re.search(r'(\d+)', quiz.get('name') or '')
+                num = m.group(1) if m else ''
+                guide = next((i for i in names
+                              if 'етодичка' in (i.get('name') or '')
+                              and num and num in (i.get('name') or '')), None)
+                if guide:
+                    gm = _re.search(r'id=(\d+)', guide.get('href') or '')
+                    if gm:
+                        p = path or f'guide_{num}.pdf'
+                        r = await self.download_resource(int(gm.group(1)), p)
+                        return {'ok': True, 'quiz': quiz.get('name'),
+                                'guide': guide.get('name'),
+                                'cmid': int(gm.group(1)), 'file': p,
+                                'bytes': r.get('bytes')}
+        return {'error': 'guide not found'}

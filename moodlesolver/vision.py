@@ -43,10 +43,21 @@ def _resolve(path, dumps_dir=None):
     if not os.path.exists(p) and dumps_dir:
         p = os.path.join(dumps_dir, path)
     if not os.path.exists(p):
-        for root in ('/tmp',):
-            c = os.path.join(root, path)
-            if os.path.exists(c):
-                return c
+        c = os.path.join('/tmp', path)
+        if os.path.exists(c):
+            p = c
+    if os.path.exists(p) and p.endswith('.b64'):
+        import base64
+        try:
+            raw = open(p, 'rb').read()
+            data = base64.b64decode(raw)
+            if data[:4] == b'\x89PNG' or data[:2] == b'\xff\xd8':
+                png = '/tmp/ocr_' + os.path.basename(p)[:-4] + '.png'
+                with open(png, 'wb') as f:
+                    f.write(data)
+                return png
+        except Exception:
+            pass
     return p
 
 def ocr_file(path, prompt=None, dumps_dir=None):
