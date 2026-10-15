@@ -113,6 +113,8 @@ class AsyncTab:
                 return u
             if h and h != h0 and u == u0 and '[object' not in u:
                 return u
+            if 'attempt.php' in u and 'page=' in u and not h:
+                await self.evaluate("(() => { const s = document.querySelector('form.quizcontinue input[type=submit], form button[type=submit], form input[type=submit]:not([name=finishattempt])'); if (s) { s.click(); return 'resub'; } return 'noresub'; })()")
         return u0
 
     async def qtext(self):

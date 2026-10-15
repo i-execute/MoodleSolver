@@ -117,9 +117,10 @@ class QuizAPI:
                         break
         if not t:
             return {'error': 'no summary'}
-        r = await t.evaluate("(() => { const b = [...document.querySelectorAll('form button[type=submit]')].find(x => x.textContent.includes('Отправить всё')); if (b) { b.click(); return 'sub'; } return 'nobtn'; })()")
+        r = await t.evaluate("(() => { const b = [...document.querySelectorAll('form button[type=submit], form input[type=submit]')].find(x => (x.textContent || x.value || '').includes('Отправить всё')); if (b) { b.click(); return 'sub'; } return 'nobtn'; })()")
         await asyncio.sleep(4)
-        r2 = await t.evaluate("(() => { const b = [...document.querySelectorAll('form button[type=submit]')].find(x => x.textContent.includes('Отправить всё и завершить тест')); if (b) { b.click(); return 'done'; } return 'noconfirm'; })()")
+        r2 = await t.evaluate("(() => { const f = document.querySelector('form'); if (!f) { return 'noform'; } const b = [...document.querySelectorAll('form button[type=submit], form input[type=submit]')].find(x => (x.textContent || x.value || '').includes('Отправить всё и завершить')); if (b) { b.click(); } f.submit(); return 'done'; })()")
+        await asyncio.sleep(4)
         return r2.get('result')
 
     async def get_result(self, quiz_id):
