@@ -30,7 +30,8 @@ def _qtype(st):
 class JsonAPI:
     def __init__(self, quiz_api, on_ocr=None, image_mode='b64',
                  image_base_url=None, ai_mode='off',
-                 ai_model=None, ai_api_key=None, ai_base_url=None):
+                 ai_model=None, ai_api_key=None, ai_base_url=None,
+                 vision_capable=False):
         self.q = quiz_api
         if on_ocr is None:
             from .vision import make_on_ocr
@@ -38,6 +39,7 @@ class JsonAPI:
         self.on_ocr = on_ocr
         self.image_mode = image_mode
         self.image_base_url = image_base_url
+        self.vision_capable = vision_capable
         self.ai_mode = ai_mode
         self.ai_model = ai_model
         self.ai_api_key = ai_api_key
@@ -88,11 +90,18 @@ class JsonAPI:
             qimg = self._masked_url(qimg) if qimg else None
             optimgs = [self._masked_url(f) for f in optimgs]
             qb64 = ob64 = None
+        elif self.vision_capable and self.image_base_url:
+            qimg = self._masked_url(qimg) if qimg else None
+            optimgs = [self._masked_url(f) for f in optimgs]
+            qb64 = ob64 = None
         else:
             qb64 = st.get('question_image_b64')
             ob64 = st.get('option_images_b64')
         v = {'page': self._page(st), 'question': st.get('question'), 'question_hash': _qh(st), 'qtype': _qtype(st), 'options': st.get('option_labels'), 'option_kinds': st.get('option_kinds'), 'checked': st.get('checked'), 'selects': st.get('selects'), 'text_inputs': st.get('text_inputs'), 'images': optimgs, 'question_image': qimg, 'question_image_b64': qb64, 'option_images_b64': ob64, 'timeleft': st.get('timeleft'), 'buttons': st.get('buttons'), 'url': st.get('url')}
-        v['ocr'] = await self._ocr_preview(st)
+        if self.vision_capable:
+            v['ocr'] = None
+        else:
+            v['ocr'] = await self._ocr_preview(st)
         return v
 
     async def _ocr_preview(self, st):

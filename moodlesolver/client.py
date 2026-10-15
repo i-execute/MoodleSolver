@@ -238,11 +238,24 @@ class AsyncMoodle:
         async with self.s.get('/tabs', params={'userId': self.user}) as r:
             return (await r.json()).get('tabs', [])
 
-    async def new_tab(self, url, settle=3):
-        async with self.s.post('/tabs', json={'userId': self.user, 'sessionKey': 's', 'url': url}) as r:
-            d = await r.json()
-        t = AsyncTab(self.s, self.user, d['tabId'])
-        await asyncio.sleep(settle)
+    async def new_tab(self, url, settle=3, retries=3):
+        last = None
+        for _ in range(retries):
+            try:
+                async with self.s.post('/tabs', json={
+                        'userId': self.user, 'sessionKey': 's',
+                        'url': url}) as r:
+                    d = await r.json()
+                t = AsyncTab(self.s, self.user, d['tabId'])
+            except (KeyError, CamofoxError) as e:
+                last = e
+                try:
+                    await self.close_stale()
+                except Exception:
+                    pass
+                await asyncio.sleep(5)
+                continue
+            await asyncio.sleep(settle)
         self.tab = t
         return t
 
@@ -258,7 +271,11 @@ class AsyncMoodle:
         for t in await self.tabs():
             if keep and keep in t.get('url', ''):
                 continue
-            await AsyncTab(self.s, self.user, t['tabId']).close()
+            try:
+                await AsyncTab(self.s, self.user,
+                               t['tabId']).close()
+            except Exception:
+                pass
 
     async def current_page(self, tab=None):
         from .parse import parse_page
@@ -403,7 +420,28 @@ class AsyncMoodle:
         a = s.find('Содержимое')
         return s[a:s.find('Блоки')] if a >= 0 else s
 
+    async def ensure_login(self, username=None, password=None):
+        u = username or self.username
+        p = password or self.password
+        try:
+            t = await self.pick('my/')
+            if t:
+                url = await t.url()
+                if 'login' not in str(url) and '[object' not in str(url):
+                    return {'ok': True, 'relogin': False}
+        except Exception:
+            pass
+        if not (u and p):
+            return {'error': 'no credentials for relogin'}
+        try:
+            await self.login(u, p)
+            return {'ok': True, 'relogin': True}
+        except Exception as e:
+            return {'error': f'relogin failed: {str(e)[:120]}'}
+
     async def open_session(self, username, password, quiz_id=None):
+        self.username = username
+        self.password = password
         await self.start()
         await self.close_stale()
         await self.login(username, password)

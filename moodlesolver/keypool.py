@@ -10,6 +10,11 @@ PROVIDER_PRESETS = {
                    'free-gemini-2.5-pro', 'free-claude-haiku-4.5',
                    'free-qwen3.5-flash'],
     },
+    'elisart': {
+        'base_url': 'https://api.elisart.ru/v1',
+        'models': ['deepseek-v4.1-flash', 'kimi-k3', 'qwen-3.8-max',
+                   'glm-5.3', 'deepseek-v4-flash'],
+    },
     'openrouter': {
         'base_url': 'https://openrouter.ai/api/v1',
         'models': [],
@@ -55,7 +60,9 @@ def fetch_models(base_url, api_key, timeout=30):
         headers={'Authorization': f'Bearer {api_key}',
                  'User-Agent': 'Mozilla/5.0'})
     try:
-        r = json.load(urllib.request.urlopen(req, timeout=timeout))
+        with urllib.request.urlopen(req, timeout=timeout) as _r:
+            raw = _r.read()
+        r = json.loads(raw)
     except Exception as e:
         return {'ok': False, 'error': str(e)[:120], 'models': []}
     ids = sorted({m.get('id') or m.get('name') or ''
@@ -126,7 +133,8 @@ class KeyPool:
                 keys = []
                 for k in e.get('keys', []):
                     if isinstance(k, dict):
-                        if k.get('status') in (None, '', 'valid') and k.get('value'):
+                        if k.get('status') in (None, '', 'valid', 'ok',
+                                               'active', 'available') and k.get('value'):
                             keys.append(k['value'])
                     elif k:
                         keys.append(str(k))
@@ -141,6 +149,14 @@ class KeyPool:
             if url:
                 self.add(url, model, keys)
         return self
+
+    def any_available(self):
+        return any(p.available() for p in self.providers)
+
+    def iter_keys(self):
+        for p in self.providers:
+            for k in p.keys:
+                yield p, k
 
     def pick(self):
         alive = [p for p in self.providers if p.keys]
@@ -168,7 +184,7 @@ class KeyPool:
 
 
 def pool_request(pool, messages, max_tokens=800, timeout=120,
-                 retries=None):
+                 retries=None, all_banned_wait=60.0):
     tries = retries if retries is not None else max(
         1, sum(len(p.keys) for p in pool.providers))
     last = None
@@ -188,6 +204,7 @@ def pool_request(pool, messages, max_tokens=800, timeout=120,
                                     f'data:image/png;base64,{b64}'}})
         body = json.dumps({'model': p.model, 'max_tokens': max_tokens,
                            'temperature': 0,
+                           'reasoning_effort': 'none',
                            'messages': [{'role': 'user',
                                          'content': content}]}).encode()
         req = urllib.request.Request(
@@ -196,12 +213,47 @@ def pool_request(pool, messages, max_tokens=800, timeout=120,
                      'Content-Type': 'application/json',
                      'User-Agent': 'Mozilla/5.0'})
         try:
-            r = json.load(urllib.request.urlopen(req, timeout=timeout))
-            return r['choices'][0]['message']['content']
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read()
+            r = json.loads(raw)
+            from .dbglog import dbg
+            dbg('pool OK %s/%s in %.1fs' % (
+                p.base_url, p.model, 0.0))
+            msg = r['choices'][0]['message']
+            txt = msg.get('content') or ''
+            if not txt and msg.get('reasoning_content'):
+                rc = str(msg['reasoning_content'])
+                if len(rc) > 400:
+                    rc = rc[-400:]
+                txt = rc
+            return txt
         except urllib.error.HTTPError as e:
+            from .dbglog import dbg
+            dbg('pool HTTP %d %s/%s' % (e.code, p.base_url, p.model))
             pool.report(p, k, e.code)
             last = e
         except Exception as e:
             pool.report(p, k, 0)
             last = e
+    if not pool.any_available():
+        time.sleep(all_banned_wait)
+        for p, k in pool.iter_keys():
+            try:
+                body = json.dumps({'model': p.model,
+                                   'max_tokens': max_tokens,
+                                   'temperature': 0,
+                                   'messages': [{'role': 'user',
+                                                 'content': content}]}).encode()
+                req = urllib.request.Request(
+                    p.base_url + '/chat/completions', data=body,
+                    headers={'Authorization': f'Bearer {k}',
+                             'Content-Type': 'application/json',
+                             'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=timeout) as _r:
+                    raw = _r.read()
+                r = json.loads(raw)
+                return r['choices'][0]['message']['content']
+            except Exception as e:
+                last = e
+                time.sleep(10)
     raise RuntimeError(f'all keys failed: {last}'[:200])

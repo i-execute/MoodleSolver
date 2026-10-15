@@ -66,6 +66,26 @@ class CtxAPI:
                 return {'ok': True, 'url': u, 'tab': t.id}
         return {'error': 'reanimate failed', 'url': await t.url()}
 
+    async def attempt_status(self, quiz_id):
+        t = await self.m.pick(f'view.php?id={quiz_id}') or await self.m.new_tab(f'{self.m.site}/mod/quiz/view.php?id={quiz_id}')
+        await asyncio.sleep(2)
+        r = await t.evaluate("(async () => { const s = document.body.innerText; const live = s.includes('Продолжить текущую попытку'); const fin = s.includes('Результаты ваших предыдущих попыток'); const m = s.match(/(\\d+[,.]\\d+)\\s*\\/\\s*(\\d+\\.?\\d*)/); return JSON.stringify({live: live, finished: fin, grade: m ? m[1] + '/' + m[2] : null}); })()")
+        try:
+            d = json.loads(r.get('result') or '{}')
+        except Exception:
+            d = {'error': 'parse'}
+        return d
+
+    async def check_site(self):
+        try:
+            t = await self.m.pick('my/') or await self.m.new_tab(f'{self.m.site}/my/')
+            await asyncio.sleep(2)
+            u = await t.url()
+            ok = 'login' not in u and '[object' not in u
+            return {'site': 'up' if ok else 'down', 'url': u}
+        except Exception as e:
+            return {'site': 'down', 'error': str(e)[:120]}
+
     async def download_resource(self, cmid, path=None):
         t = await self._tab_for(f'mod/resource/view.php?id={cmid}')
         await asyncio.sleep(2)

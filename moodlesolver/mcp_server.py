@@ -147,21 +147,51 @@ async def execute_ai_response(response: str) -> str:
 @mcp.tool()
 async def solve_test(quiz_id: int, mode: str = 'openai',
                      api_key: str = '', base_url: str = '',
-                     model: str = '') -> str:
-    """Решает тест полностью через AI. Требуется connect перед вызовом.
-    mode: 'openai' (OpenAI-совместимый endpoint, нужны api_key+base_url)
-    или 'opencode' (локальный opencode CLI, модель mimo по умолчанию).
-    Возможные ошибки: SESSION_NOT_AUTHORIZED (перелогинься через connect),
-    SESSION_EMPTY, ATTEMPT_NOT_FOUND."""
+                     model: str = '', keykeeper_file: str = '',
+                     image_base_url: str = '',
+                     debug_log: str = '',
+                     fallback_opencode: bool = True,
+                     fallback_ocr: bool = True) -> str:
+    """Решает тест полностью через AI, доводит до submit и результата.
+    Требуется connect перед вызовом. Автоматически стартует или
+    резюмит попытку, следит за здоровьем сайта (HealthWatcher),
+    при падении сайта реконнектится и сообщает модели о несохраненных
+    изменениях. mode: 'openai' (api_key+base_url) | 'opencode' |
+    'pool' (keykeeper_file с провайдерами и ключами) | 'preset'
+    (base_url+api_key одного провайдера). debug_log: путь к файлу
+    полного лога (state/AI/fallback/pool решения).
+    Ошибки: SESSION_NOT_AUTHORIZED (перелогинься через connect),
+    SESSION_EMPTY, ATTEMPT_NOT_FOUND, AI_ERROR."""
     key = api_key or _state.get('key')
     url = base_url or _state.get('base_url')
     mdl = model or _state.get('model')
-    r = AIRunner(mode=mode, api_key=key, base_url=url,
-                 model=mdl).bind(_qapi())
+    kkf = keykeeper_file or _state.get('keykeeper_file')
+    ibu = image_base_url or _state.get('image_base_url')
+    if debug_log:
+        from .dbglog import enable_debug
+        enable_debug(logfile=debug_log, console=False)
+    if mode == 'pool' and kkf:
+        r = AIRunner(mode='pool', keykeeper_file=kkf, model=mdl,
+                     image_base_url=ibu,
+                     fallback_opencode=fallback_opencode,
+                     fallback_ocr=fallback_ocr).bind(_qapi())
+    else:
+        r = AIRunner(mode=mode, api_key=key, base_url=url,
+                     model=mdl, image_base_url=ibu,
+                     fallback_opencode=fallback_opencode,
+                     fallback_ocr=fallback_ocr).bind(_qapi())
     try:
         res = await r.loop(quiz_id)
     except Exception as e:
         res = {'error': 'AI_ERROR', 'message': str(e)[:200]}
+    if not (res and res.get('error')):
+        try:
+            await asyncio.sleep(5)
+            grade = await _qapi().get_result(quiz_id)
+            res = dict(res) if isinstance(res, dict) else {'done': str(res)}
+            res['grade'] = grade
+        except Exception:
+            pass
     return json.dumps(res, ensure_ascii=False)
 
 def main():
