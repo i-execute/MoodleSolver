@@ -14,9 +14,17 @@ def _qapi():
     return _state['qapi']
 
 @mcp.tool()
-async def connect(site: str, username: str, password: str) -> str:
+async def connect(site: str, username: str, password: str,
+                  api_key: str = '', base_url: str = '',
+                  model: str = '') -> str:
     _state['m'] = AsyncMoodle(site=site, user=username.split('@')[0])
     await _state['m'].open_session(username, password)
+    if api_key:
+        _state['key'] = api_key
+    if base_url:
+        _state['base_url'] = base_url
+    if model:
+        _state['model'] = model
     return 'connected'
 
 @mcp.tool()
@@ -137,9 +145,24 @@ async def execute_ai_response(response: str) -> str:
     return json.dumps(await AIRunner().bind(_qapi()).execute_ai_response(json.loads(response)))
 
 @mcp.tool()
-async def run_quiz(quiz_id: int, api_key: str, base_url: str='', model: str='') -> str:
-    r = AIRunner(api_key, base_url or None, model or None).bind(_qapi())
-    return await r.loop(quiz_id)
+async def solve_test(quiz_id: int, mode: str = 'openai',
+                     api_key: str = '', base_url: str = '',
+                     model: str = '') -> str:
+    """Решает тест полностью через AI. Требуется connect перед вызовом.
+    mode: 'openai' (OpenAI-совместимый endpoint, нужны api_key+base_url)
+    или 'opencode' (локальный opencode CLI, модель mimo по умолчанию).
+    Возможные ошибки: SESSION_NOT_AUTHORIZED (перелогинься через connect),
+    SESSION_EMPTY, ATTEMPT_NOT_FOUND."""
+    key = api_key or _state.get('key')
+    url = base_url or _state.get('base_url')
+    mdl = model or _state.get('model')
+    r = AIRunner(mode=mode, api_key=key, base_url=url,
+                 model=mdl).bind(_qapi())
+    try:
+        res = await r.loop(quiz_id)
+    except Exception as e:
+        res = {'error': 'AI_ERROR', 'message': str(e)[:200]}
+    return json.dumps(res, ensure_ascii=False)
 
 def main():
     ap = argparse.ArgumentParser()

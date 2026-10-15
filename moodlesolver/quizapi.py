@@ -83,7 +83,7 @@ class QuizAPI:
         if index is not None:
             set_mark = 'true' if checked is not False else 'false'
             r2 = await t.evaluate(f"(() => {{ const ins = document.querySelectorAll('.answer input[type=radio], .answer input[type=checkbox]'); if (!ins[{index}]) return 'nobtn'; const e = ins[{index}]; if (e.type === 'checkbox') {{ const want = {set_mark}; if (e.checked !== want) e.click(); return e.checked === want ? 'ok' : 'fail'; }} if (e.checked) return 'ok'; e.click(); return e.checked ? 'ok' : 'fail'; }})()")
-            return {'clicked': 1 if r2 == 'ok' else 0}
+            return {'clicked': 1 if (r2.get('result') if isinstance(r2, dict) else r2) == 'ok' else 0}
         return {'clicked': 0}
 
     async def set_text(self, text, index=0):
@@ -109,7 +109,7 @@ class QuizAPI:
         if not t:
             at = await self.m.pick('attempt.php')
             if at:
-                r = await at.evaluate("var n = document.querySelector('input[name=next], input[name=finishattempt]'); n ? (n.click(), 'ok') : 'x'")
+                r = await at.evaluate("(() => { const n = document.querySelector('input[name=next], input[name=finishattempt]'); if (n) { n.click(); return 'ok'; } return 'x'; })()")
                 for _ in range(10):
                     await asyncio.sleep(1)
                     t = await self.m.pick('summary.php')

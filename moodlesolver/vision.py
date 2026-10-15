@@ -3,6 +3,13 @@ import shutil
 import subprocess
 import threading
 DEFAULT_PROMPT = 'Транскрибируй формулу. Только формула.'
+PROMPT_RU = 'Перепиши весь русский текст с картинки точно как есть.'
+PROMPT_EN = 'Write all English text from the image exactly as is.'
+PROMPT_DESC = ('Опиши подробно что на картинке: объекты, текст, '
+               'таблицы, графики, диаграммы, условия задач.')
+PROMPT_FORMULA = 'Транскрибируй формулу в LaTeX. Только формула.'
+PROMPT_TABLE = ('Перепиши таблицу с картинки в markdown, '
+                'все числа точно.')
 
 def ocr_local(path, lang='rus+eng', psm=None, timeout=20):
     if not shutil.which('tesseract'):
@@ -67,11 +74,29 @@ def ocr_file(path, prompt=None, dumps_dir=None):
         return ocr_local(p, lang='rus')
     if 'english' in pr or 'англ' in pr:
         return ocr_local(p, lang='eng')
-    if 'формул' in pr or not prompt:
+    if 'таблиц' in pr or 'table' in pr:
+        t = ocr_local(p)
+        if t:
+            return t
+    if 'формул' in pr or 'latex' in pr or not prompt:
         f = ocr_formula(p)
         if f:
             return f
+    if 'описан' in pr or 'опис' in pr or 'describe' in pr:
+        return ocr_local(p)
     return ocr_local(p)
+
+def ocr_full(path, dumps_dir=None):
+    p = _resolve(path, dumps_dir)
+    ru = ocr_local(p, lang='rus')
+    en = ocr_local(p, lang='eng')
+    from concurrent.futures import ThreadPoolExecutor
+    try:
+        with ThreadPoolExecutor(1) as ex:
+            formula = ex.submit(lambda: ocr_formula(p)).result(timeout=40)
+    except Exception:
+        formula = None
+    return {'ru': ru, 'en': en, 'formula': formula}
 
 def make_on_ocr(dumps_dir=None):
 

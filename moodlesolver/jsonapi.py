@@ -29,8 +29,8 @@ def _qtype(st):
 
 class JsonAPI:
     def __init__(self, quiz_api, on_ocr=None, image_mode='b64',
-                 image_base_url=None, ai_preview=False,
-                 ai_model=None):
+                 image_base_url=None, ai_mode='off',
+                 ai_model=None, ai_api_key=None, ai_base_url=None):
         self.q = quiz_api
         if on_ocr is None:
             from .vision import make_on_ocr
@@ -38,9 +38,10 @@ class JsonAPI:
         self.on_ocr = on_ocr
         self.image_mode = image_mode
         self.image_base_url = image_base_url
-        self.ai = bool(ai_preview)
-        from .aipreview import OC_DEFAULT_MODEL
-        self.ai_model = ai_model or OC_DEFAULT_MODEL
+        self.ai_mode = ai_mode
+        self.ai_model = ai_model
+        self.ai_api_key = ai_api_key
+        self.ai_base_url = ai_base_url
 
     async def handle(self, command):
         c = json.loads(command) if isinstance(command, str) else command
@@ -105,14 +106,17 @@ class JsonAPI:
                 out.setdefault('errors', []).append(str(p)[:60])
             else:
                 out[p[0]] = p[1]
-        if self.ai:
+        if self.ai_mode != 'off':
             try:
-                from .aipreview import ai_preview
+                from .aipreview import ai_preview, AI_MODE_OFF
                 paths = [_resolve(f) for _, f in files]
-                text = await aio.to_thread(ai_preview, paths,
-                                           model=self.ai_model)
+                text = await aio.to_thread(
+                    ai_preview, paths,
+                    mode=self.ai_mode, model=self.ai_model,
+                    api_key=self.ai_api_key,
+                    base_url=self.ai_base_url)
                 if text:
-                    out['ai_preview'] = text[:2000]
+                    out['ai'] = text[:2000]
             except Exception:
                 pass
         return out or None
@@ -172,8 +176,21 @@ class JsonAPI:
 
     async def _confirm(self):
         st = await self.q.get_state() or {}
-        if not (st.get('checked') or st.get('text_inputs') or st.get('selects')):
-            return err('E_NOTHING_CHECKED', page=self._page(st), question=st.get('question'))
+        checked = [c for c in (st.get('checked') or []) if c]
+        texts = [t for t in (st.get('text_inputs') or []) if t]
+        sels = [s for s in (st.get('selects') or []) if s.get('value')]
+        if not (checked or texts or sels):
+            return err('E_NOTHING_CHECKED', page=self._page(st),
+                       question=st.get('question'),
+                       selects_state=st.get('selects'),
+                       text_state=st.get('text_inputs'))
+        if st.get('selects') and len(sels) < len(st.get('selects') or []):
+            empty = [i for i, s in enumerate(st.get('selects') or [])
+                     if not s.get('value')]
+            return err('E_SELECTS_INCOMPLETE', page=self._page(st),
+                       empty_comboboxes=empty,
+                       hint='fill all non-empty comboboxes; a combobox '
+                            'left blank on purpose requires checked/text')
         t = await self.q._tab()
         u0 = st.get('url') or ''
         fin = await t.evaluate("(async () => { const n = document.querySelector('input[name=finishattempt], input[name=next]'); if (n) { n.click(); return n.name; } return 'nobtn'; })()")
@@ -187,7 +204,7 @@ class JsonAPI:
         u = await t.url()
         if u == u0 or '[object' in (u or ''):
             from .ctx import CtxAPI
-            mm = re.search('cmid=(\d+)', u0)
+            mm = re.search(r'cmid=(\d+)', u0)
             if mm:
                 r = await CtxAPI(self.q.m).resume_attempt(int(mm.group(1)))
                 if r.get('ok'):
@@ -202,7 +219,7 @@ class JsonAPI:
     async def _resume(self):
         from .ctx import CtxAPI
         u = (await self.q.get_state() or {}).get('url') or ''
-        mm = re.search('cmid=(\\d+)', u)
+        mm = re.search(r'cmid=(\d+)', u)
         if not mm:
             return {}
         r = await CtxAPI(self.q.m).resume_attempt(int(mm.group(1)))
@@ -228,9 +245,9 @@ class JsonAPI:
         if isinstance(r, dict) and r.get('error'):
             return r
         st = await self.q.get_state() or {}
-        mm = re.search('cmid=(\\d+)', st.get('url') or '')
+        mm = re.search(r'cmid=(\d+)', st.get('url') or '')
         if not mm:
-            mm = re.search('cmid=(\\d+)', (self.q.m.tab and await self.q.m.tab.url() or '') or '')
+            mm = re.search(r'cmid=(\d+)', (self.q.m.tab and await self.q.m.tab.url() or '') or '')
         if mm:
             t = await self.q.m.new_tab(f'{self.q.m.site}/mod/quiz/view.php?id={mm.group(1)}')
             r2 = await t.evaluate("(document.querySelector('[role=main]') ? document.querySelector('[role=main]').innerText : '').match(/оценка за этот тест:\\s*([\\d,]+)\\/(\\d+)/)")
