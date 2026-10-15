@@ -67,13 +67,26 @@ class JsonAPI:
             return await self._submit()
         return err('E_UNKNOWN_ACTION', action=act)
 
+    def _masked_url(self, fname):
+        import hashlib
+        import secrets
+        raw = fname.rsplit('.', 1)[0]
+        h = hashlib.sha256(raw.encode()).hexdigest()[:20]
+        a = secrets.token_hex(16)
+        b = secrets.token_hex(16)
+        ext = fname.rsplit('.', 1)[-1] if '.' in fname else 'png'
+        if ext == 'b64':
+            ext = 'png'
+        return (f'{self.image_base_url.rstrip("/")}/{a}/{b}/'
+                f'img_{h}_moodlesolver.{ext}')
+
     async def _view(self, st):
         st = st or {}
         qimg = st.get('question_image_file')
         optimgs = st.get('option_image_files') or []
         if self.image_mode == 'url' and self.image_base_url:
-            qimg = f'{self.image_base_url}/{qimg}' if qimg else None
-            optimgs = [f'{self.image_base_url}/{f}' for f in optimgs]
+            qimg = self._masked_url(qimg) if qimg else None
+            optimgs = [self._masked_url(f) for f in optimgs]
             qb64 = ob64 = None
         else:
             qb64 = st.get('question_image_b64')

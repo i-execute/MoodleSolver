@@ -6,6 +6,7 @@ import urllib.request
 OC_DEFAULT_MODEL = 'mimo-v2.6-flash-free'
 MODE_OPENCODE = 'opencode'
 MODE_OPENAI = 'openai'
+MODE_POOL = 'pool'
 
 AGENT_PROMPT = (
     'You are solving a Moodle quiz on mathematical statistics. '
@@ -38,11 +39,17 @@ def check_session_error(st):
 class AIRunner:
 
     def __init__(self, mode=MODE_OPENAI, api_key=None, base_url=None,
-                 model=None):
+                 model=None, pool=None, keykeeper_file=None):
         self.mode = mode
         self.key = api_key
         self.base = base_url
         self.model = model
+        self.pool = pool
+        if keykeeper_file and not pool:
+            from .keypool import KeyPool
+            self.pool = KeyPool().load(keykeeper_file,
+                                       default_model=model)
+            self.mode = MODE_POOL
         self.qapi = None
 
     def bind(self, quizapi):
@@ -55,6 +62,12 @@ class AIRunner:
         return ocr_file(file, prompt, d)
 
     def send_ai_request(self, messages, images=None, max_tokens=400):
+        if self.mode == MODE_POOL:
+            from .keypool import pool_request
+            if isinstance(messages, str) and images:
+                messages = [{'text': messages, 'images': images}]
+                images = None
+            return pool_request(self.pool, messages, max_tokens=max_tokens)
         if self.mode == MODE_OPENCODE:
             return self._send_opencode(messages, images, max_tokens)
         return self._send_openai(messages, images, max_tokens)
