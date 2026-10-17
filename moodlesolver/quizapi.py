@@ -34,12 +34,17 @@ class QuizAPI:
         return info
 
     async def start_attempt(self, quiz_id):
-        info = await self.get_quiz_info(quiz_id)
-        if info.get('can_continue'):
+        from .dbglog import dbg
+        t = await self.m.pick(f'view.php?id={quiz_id}') or \
+            await self.m.new_tab(f'{self.m.site}/mod/quiz/view.php?id={quiz_id}')
+        self.m.tab = t
+        s = await t.main_content()
+        if 'Продолжить текущую попытку' in s:
+            dbg('start %d: resume own attempt' % quiz_id)
             at = await self.m.resume_attempt(quiz_id)
             if at:
                 return at
-        t = self.m.tab
+        dbg('start %d: click startattempt' % quiz_id)
         r = await t.evaluate("var fs = Array.from(document.querySelectorAll('form')).filter(f => f.action.includes('startattempt'));fs.length ? (fs[fs.length-1].submit(), 'sub') : 'nof'")
         if r.get('result') == 'sub':
             await asyncio.sleep(5)
@@ -74,8 +79,10 @@ class QuizAPI:
         return st
 
     async def set_answer(self, label=None, index=None, labels=None, checked=None):
+        from .dbglog import dbg
         t = await self._tab()
         wants = labels if labels else [label] if label else []
+        dbg('answer: wants=%r index=%r' % (wants[:3], index))
         if wants:
             set_mark = 'true' if checked is not False else 'false'
             r = await t.evaluate("(async () => { const ins = [...document.querySelectorAll('.answer input[type=radio], .answer input[type=checkbox]')]; const wants = " + json.dumps([w.lower() for w in wants]) + "; const setTo = " + set_mark + "; let n = 0; const norm = s => (s || '').replace(/[\\s\\xa0\\u200b\\u200c]+/g, ' ') .trim().toLowerCase(); for (const w of wants) {  const wn = norm(w);  let e = ins.find(x => norm(x.parentElement.textContent) === wn);  if (!e) e = ins.find(x => norm(x.parentElement.textContent)   .startsWith(wn.slice(0, 25)));  if (e) { if (e.type === 'checkbox' && e.checked !== setTo) { e.click(); } else if (e.type === 'radio' && !e.checked) { e.click(); } if (e.type === 'radio' || e.checked === setTo) n++; } } return JSON.stringify({clicked: n}); })()")
@@ -105,22 +112,30 @@ class QuizAPI:
         return {'labels': st.get('option_labels'), 'kinds': st.get('option_kinds'), 'selects': st.get('selects'), 'text_inputs': st.get('text_inputs')}
 
     async def submit_all(self):
+        from .dbglog import dbg
         t = await self.m.pick('summary.php')
         if not t:
             at = await self.m.pick('attempt.php')
             if at:
+                dbg('submit: attempt page -> finishattempt click')
                 r = await at.evaluate("(() => { const n = document.querySelector('input[name=next], input[name=finishattempt]'); if (n) { n.click(); return 'ok'; } return 'x'; })()")
+                dbg('submit: finish click %r' % r)
                 for _ in range(10):
                     await asyncio.sleep(1)
                     t = await self.m.pick('summary.php')
                     if t:
                         break
+                if not t:
+                    t = await self.m.pick('processattempt')
         if not t:
+            dbg('submit: no summary tab found')
             return {'error': 'no summary'}
+        dbg('submit: summary page -> Отправить всё')
         r = await t.evaluate("(() => { const b = [...document.querySelectorAll('form button[type=submit], form input[type=submit]')].find(x => (x.textContent || x.value || '').includes('Отправить всё')); if (b) { b.click(); return 'sub'; } return 'nobtn'; })()")
         await asyncio.sleep(4)
         r2 = await t.evaluate("(() => { const f = document.querySelector('form'); if (!f) { return 'noform'; } const b = [...document.querySelectorAll('form button[type=submit], form input[type=submit]')].find(x => (x.textContent || x.value || '').includes('Отправить всё и завершить')); if (b) { b.click(); } f.submit(); return 'done'; })()")
         await asyncio.sleep(4)
+        dbg('submit: final %r' % r2)
         return r2.get('result')
 
     async def get_result(self, quiz_id):

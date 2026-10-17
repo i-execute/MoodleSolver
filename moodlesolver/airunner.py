@@ -16,10 +16,16 @@ AGENT_PROMPT = (
     '{"action": "answer|text|select|next|submit", '
     '"label": "...", "labels": [...], "index": 0, '
     '"value": "...", "values": [...]} '
-    'IMPORTANT: if this question is already answered (checked contains '
-    'true for the option you chose), reply {"action":"next"} instead of '
-    'answering again. After answering a NEW question on a page that '
-    'shows no other unanswered questions, reply {"action":"next"}.')
+    'RULES: 1) If the question is already answered (checked true for '
+    'your option), reply {"action":"next"}. 2) After answering the '
+    'current question, reply {"action":"next"} to move on. 3) If '
+    '"next" keeps returning the same question, try answering it '
+    'again with a different option. 4) When ALL questions are '
+    'answered (or no new question appears), reply '
+    '{"action":"submit"} to finish the attempt and get the grade. '
+    '5) On the last page the next button says "Закончить попытку" '
+    'and a summary page asks to confirm submission - reply '
+    '{"action":"submit"}.')
 
 
 class SessionError(Exception):
@@ -376,6 +382,8 @@ class AIRunner:
         w = HealthWatcher(j, quiz_id, poll=4.0, max_dead=4)
         notice = None
         empty = 0
+        stuck = 0
+        last_q = None
         for _ in range(max_steps):
             from .dbglog import dbg
             try:
@@ -388,6 +396,19 @@ class AIRunner:
                 dbg('state EXC %s -> reconnect' % str(e)[:100])
                 st = await w.reconnect()
                 notice = w.notice()
+            qk = (st.get('question_hash') or str(st.get('question'))[:80])
+            if qk and qk == last_q:
+                stuck += 1
+            else:
+                stuck = 0
+                last_q = qk
+            if stuck >= 4:
+                dbg('stuck on same question x%d -> submit' % stuck)
+                try:
+                    fin = await j.handle({'action': 'submit'})
+                    return {'done': 'auto-submit after stuck', 'submit': fin}
+                except Exception as e:
+                    dbg('auto-submit failed: %s' % str(e)[:100])
             if not (st.get('question') or st.get('images') or
                     st.get('selects') or st.get('text_inputs') or
                     st.get('error')):
@@ -514,12 +535,31 @@ class AIRunner:
         return await self._final_result(quiz_id, w)
 
     async def _final_result(self, quiz_id, w):
-        for _ in range(3):
+        from .dbglog import dbg
+        res = None
+        for _ in range(4):
             try:
-                return await self.qapi.get_result(quiz_id)
-            except Exception:
+                res = await self.qapi.get_result(quiz_id)
+                if isinstance(res, str) and '/' in res:
+                    break
+                await asyncio.sleep(4)
+            except Exception as e:
+                dbg('get_result EXC %s' % str(e)[:80])
                 await w.reconnect()
         try:
-            return await self.qapi.get_result(quiz_id)
+            info = await self.qapi.get_quiz_info(quiz_id)
         except Exception:
-            return {'error': 'result unavailable'}
+            info = {}
+        out = {'quiz_id': quiz_id, 'grade': res,
+               'can_start': info.get('can_start'),
+               'can_continue': info.get('can_continue'),
+               'finished': not (info.get('can_start')
+                                or info.get('can_continue'))}
+        if isinstance(res, str) and '/' in res:
+            out['done'] = 'graded'
+        elif info.get('can_continue'):
+            out['done'] = 'attempt unfinished'
+        else:
+            out['done'] = 'no grade yet'
+        dbg('final: %r' % str(out)[:150])
+        return out

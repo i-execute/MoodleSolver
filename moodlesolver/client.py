@@ -103,6 +103,8 @@ class AsyncTab:
         u0 = await self.url()
         h0 = await self.evaluate("(() => { const q = document.querySelector('.qtext'); return q ? q.innerText.trim().slice(0, 80) : ''; })()")
         h0 = (h0.get('result') or '')
+        from .dbglog import dbg
+        dbg('next: click from url=%s q=%r' % (str(u0)[:60], h0[:40]))
         await self.evaluate("(() => { const n = document.querySelector('input[name=next]') || document.querySelector('input[name=finishattempt]'); if (n) n.click(); return n ? 'ok' : 'nonext'; })()")
         for _ in range(12):
             await asyncio.sleep(1)
@@ -110,6 +112,7 @@ class AsyncTab:
             h = await self.evaluate("(() => { const q = document.querySelector('.qtext'); return q ? q.innerText.trim().slice(0, 80) : ''; })()")
             h = (h.get('result') or '')
             if u != u0 and '[object' not in u:
+                dbg('next: moved to %s' % str(u)[:60])
                 return u
             if h and h != h0 and u == u0 and '[object' not in u:
                 return u
