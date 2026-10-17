@@ -104,9 +104,14 @@ class AIRunner:
                     if not self.pool:
                         continue
                     from .keypool import pool_request
+                    from .dbglog import dbg
+                    if images:
+                        dbg('pool: sending %d image(s) directly' %
+                            len(images))
                     out = pool_request(self.pool, str(messages),
                                        max_tokens=max(
-                                           1600, max_tokens))
+                                           1600, max_tokens),
+                                       images=images)
                 elif step == 'opencode':
                     if not (self.fallback_opencode
                             and shutil.which('opencode')):
@@ -168,9 +173,14 @@ class AIRunner:
             return self._send_content(route['content'], max_tokens)
         if self.mode == MODE_POOL:
             from .keypool import pool_request
+            from .dbglog import dbg
             prompt = str(messages)
+            if images:
+                dbg('pool: sending %d image(s) directly with prompt' %
+                    len(images))
             return pool_request(self.pool, prompt,
-                                max_tokens=max(1600, max_tokens))
+                                max_tokens=max(1600, max_tokens),
+                                images=images)
         if self.mode == MODE_OPENCODE:
             return self._send_opencode(messages, None, max_tokens)
         return self._send_openai(messages, None, max_tokens)
