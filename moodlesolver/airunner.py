@@ -47,9 +47,11 @@ class AIRunner:
                  model=None, pool=None, keykeeper_file=None,
                  image_base_url=None, vision_model=None,
                  vision_base_url=None, vision_api_key=None,
-                 fallback_opencode=True, fallback_ocr=True):
+                 fallback_opencode=True, fallback_ocr=True,
+                 chain=None):
         self.fallback_opencode = fallback_opencode
         self.fallback_ocr = fallback_ocr
+        self.chain = chain or ['primary', 'pool', 'opencode', 'ocr']
         self._last_error = None
         self.image_base_url = image_base_url
         self.vision_model = vision_model
@@ -81,34 +83,46 @@ class AIRunner:
     def send_ai_request(self, messages, images=None, max_tokens=400):
         from .dbglog import dbg, err as _err
         t0 = time.time()
-        dbg('AI request start (images=%d, mode=%s)' % (
-            len(images or []), self.mode))
-        primary = None
-        try:
-            primary = self._send_primary(messages, images, max_tokens)
-        except Exception as e:
-            self._last_error = str(e)[:120]
-            dbg('AI primary FAILED: %s' % self._last_error)
-        if primary is not None:
-            dbg('AI primary OK in %.1fs: %r' % (
-                time.time() - t0, str(primary)[:80]))
-            return primary
-        if self.fallback_opencode and shutil.which('opencode'):
-            dbg('AI fallback -> opencode')
+        dbg('AI request start (images=%d, chain=%s)' % (
+            len(images or []), self.chain))
+        errors = []
+        for step in self.chain:
             try:
-                out = self._send_opencode(
-                    self._flatten(messages, images, use_ocr=True),
-                    None, max_tokens)
-                dbg('AI opencode OK in %.1fs: %r' % (
-                    time.time() - t0, str(out)[:80]))
-                return out
+                if step == 'primary':
+                    out = self._send_primary(messages, images, max_tokens)
+                elif step == 'pool':
+                    if not self.pool:
+                        continue
+                    from .keypool import pool_request
+                    out = pool_request(self.pool, str(messages),
+                                       max_tokens=max(
+                                           1600, max_tokens))
+                elif step == 'opencode':
+                    if not (self.fallback_opencode
+                            and shutil.which('opencode')):
+                        continue
+                    out = self._send_opencode(
+                        self._flatten(messages, images, use_ocr=True),
+                        None, max_tokens)
+                elif step == 'ocr':
+                    if not (self.fallback_ocr and images):
+                        continue
+                    out = self._ocr_only_answer(messages, images)
+                else:
+                    continue
             except Exception as e:
-                dbg('AI opencode FAILED: %s' % str(e)[:120])
-        if self.fallback_ocr and images:
-            dbg('AI fallback -> local OCR')
-            return self._ocr_only_answer(messages, images)
-        _err('AI all backends failed (last: %s)' % self._last_error)
-        raise RuntimeError(self._last_error or 'all AI backends failed')
+                errors.append('%s: %s' % (step, str(e)[:120]))
+                self._last_error = str(e)[:120]
+                dbg('AI step %s FAILED: %s' % (step, self._last_error))
+                continue
+            if out is not None:
+                dbg('AI step %s OK in %.1fs: %r' % (
+                    step, time.time() - t0, str(out)[:80]))
+                return out
+            errors.append('%s: empty' % step)
+        msg = 'AI all backends failed: ' + ' | '.join(errors)
+        _err(msg)
+        raise RuntimeError(msg)
 
     def _send_primary(self, messages, images, max_tokens):
         if images:
