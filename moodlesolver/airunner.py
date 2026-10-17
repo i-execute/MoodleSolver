@@ -337,7 +337,10 @@ class AIRunner:
             return {'action': None, 'raw': text}
 
     async def execute_ai_response(self, resp):
+        from .dbglog import dbg, err as _err
         a = resp.get('action')
+        if not a:
+            dbg('AI response unparsed: %r' % str(resp)[:120])
         if a == 'answer':
             for l in resp.get('labels') or ([resp['label']] if resp.get('label') else []):
                 await self.qapi.set_answer(label=l)
@@ -487,6 +490,14 @@ class AIRunner:
                     notice = w.notice()
                 continue
             prompt = AGENT_PROMPT
+            if st.get('qtype') == 'unknown':
+                from .dbglog import dbg
+                dbg('unknown qtype -> generic answer allowed')
+                prompt += ('\nWARNING: question type is unknown/mixed '
+                           '(maybe drag-drop, matrix, gap-fill). Inspect '
+                           'options carefully and pick the best answer '
+                           'format: labels list for multiple, value for '
+                           'text, index for single pick.')
             if notice:
                 prompt += '\nВНИМАНИЕ: сайт был недоступен, последние ' \
                           'изменения могли не сохраниться. Текущее ' \
@@ -516,7 +527,9 @@ class AIRunner:
                     st.get('option_images_b64') or
                     ([st['question_image_b64']]
                      if st.get('question_image_b64') else None))
-            except Exception:
+            except Exception as e:
+                from .dbglog import err as _aerr
+                _aerr('AI request failed: %s' % str(e)[:150])
                 await asyncio.sleep(20)
                 txt = 'NOANSWER'
             resp = self.receive_ai_response(txt)
