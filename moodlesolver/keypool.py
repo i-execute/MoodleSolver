@@ -184,7 +184,7 @@ class KeyPool:
 
 
 def pool_request(pool, messages, max_tokens=800, timeout=120,
-                 retries=None, all_banned_wait=60.0):
+                 retries=None, all_banned_wait=60.0, images=None):
     tries = retries if retries is not None else max(
         1, sum(len(p.keys) for p in pool.providers))
     last = None
@@ -196,12 +196,18 @@ def pool_request(pool, messages, max_tokens=800, timeout=120,
         content = [{'type': 'text',
                     'text': json.dumps(messages, ensure_ascii=False)
                     if isinstance(messages, (dict, list)) else str(messages)}]
-        for m in messages if isinstance(messages, list) else []:
-            if isinstance(m, dict):
-                for b64 in m.get('images') or []:
-                    content.append({'type': 'image_url',
-                                    'image_url': {'url':
-                                    f'data:image/png;base64,{b64}'}})
+        if isinstance(messages, list):
+            for m in messages:
+                if isinstance(m, dict):
+                    for b64 in m.get('images') or []:
+                        content.append({'type': 'image_url',
+                                        'image_url': {'url':
+                                        f'data:image/png;base64,{b64}'}})
+        for b64 in (images or []):
+            content.append({'type': 'image_url',
+                            'image_url': {'url':
+                            str(b64) if str(b64).startswith('http')
+                            else f'data:image/png;base64,{b64}'}})
         body = json.dumps({'model': p.model, 'max_tokens': max_tokens,
                            'temperature': 0,
                            'reasoning_effort': 'none',

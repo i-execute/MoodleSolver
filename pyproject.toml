@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "moodlesolver"
-version = "2.4.3"
+version = "2.4.4"
 description = "Moodle quiz automation library and MCP server with local OCR (tesseract + pix2tex) and AI modes (opencode / OpenAI-compatible)"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -48,11 +48,15 @@ class AIRunner:
                  image_base_url=None, vision_model=None,
                  vision_base_url=None, vision_api_key=None,
                  fallback_opencode=True, fallback_ocr=True,
-                 chain=None):
+                 chain=None, vision_keykeeper_file=None):
         self.fallback_opencode = fallback_opencode
         self.fallback_ocr = fallback_ocr
         self.chain = chain or ['primary', 'pool', 'opencode', 'ocr']
         self._last_error = None
+        self.vision_pool = None
+        if vision_keykeeper_file:
+            from .keypool import KeyPool
+            self.vision_pool = KeyPool().load(vision_keykeeper_file)
         self.image_base_url = image_base_url
         self.vision_model = vision_model
         self.vision_base_url = vision_base_url
@@ -104,6 +108,14 @@ class AIRunner:
                     out = self._send_opencode(
                         self._flatten(messages, images, use_ocr=True),
                         None, max_tokens)
+                elif step == 'vision_pool':
+                    if not (self.vision_pool and images):
+                        continue
+                    from .keypool import pool_request
+                    out = pool_request(
+                        self.vision_pool, str(messages),
+                        max_tokens=max(1600, max_tokens),
+                        images=images)
                 elif step == 'ocr':
                     if not (self.fallback_ocr and images):
                         continue
@@ -138,6 +150,13 @@ class AIRunner:
             route = self.vision_router.route(
                 self._active_base(), self._active_key(), self.model,
                 images, str(messages), ocr=self._ocr_b64)
+            if route['mode'] == 'ocr' and self.vision_pool:
+                from .dbglog import dbg
+                dbg('vision primary not vision-capable -> vision_pool')
+                from .keypool import pool_request
+                return pool_request(self.vision_pool, str(messages),
+                                    max_tokens=max(1600, max_tokens),
+                                    images=images)
             if route['mode'] == 'ocr':
                 return self._send_plain(route['content'], max_tokens)
             return self._send_content(route['content'], max_tokens)
