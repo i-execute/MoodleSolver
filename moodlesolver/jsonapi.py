@@ -5,13 +5,23 @@ import re
 from .errors import err
 
 def _qh(st):
-    q = (st or {}).get('question')
-    return hashlib.md5(q.encode()).hexdigest()[:10] if q else None
+    st = st or {}
+    q = st.get('question') or ''
+    sig = [q]
+    for v in (st.get('checked') or []):
+        sig.append('1' if v else '0')
+    sig.extend([str(v) for v in (st.get('text_inputs') or [])])
+    for s in (st.get('selects') or st.get('match_selects') or []):
+        sig.append(str(s.get('value') or ''))
+    sig.extend([str(x) for x in (st.get('dragdrop') or [])])
+    blob = '|'.join(sig)
+    return hashlib.md5(blob.encode()).hexdigest()[:10] if q else None
 
 def _qtype(st):
     st = st or {}
     kinds = st.get('option_kinds') or []
-    if st.get('text_inputs') and (not kinds):
+    has_texts = st.get('text_count') is not None and st.get('text_count') > 0
+    if has_texts and (not kinds):
         return 'text'
     if st.get('selects') and (not kinds):
         return 'select'
@@ -23,8 +33,12 @@ def _qtype(st):
         return 'radio'
     if st.get('selects'):
         return 'select'
-    if st.get('text_inputs'):
+    if has_texts:
         return 'text'
+    if st.get('match_selects'):
+        return 'select'
+    if st.get('dragdrop'):
+        return 'match'
     return 'unknown'
 
 class JsonAPI:
@@ -97,7 +111,7 @@ class JsonAPI:
         else:
             qb64 = st.get('question_image_b64')
             ob64 = st.get('option_images_b64')
-        v = {'page': self._page(st), 'question': st.get('question'), 'question_hash': _qh(st), 'qtype': _qtype(st), 'options': st.get('option_labels'), 'option_kinds': st.get('option_kinds'), 'checked': st.get('checked'), 'selects': st.get('selects'), 'text_inputs': st.get('text_inputs'), 'images': optimgs, 'question_image': qimg, 'question_image_b64': qb64, 'option_images_b64': ob64, 'timeleft': st.get('timeleft'), 'buttons': st.get('buttons'), 'url': st.get('url')}
+        v = {'page': self._page(st), 'question': st.get('question'), 'question_hash': _qh(st), 'qtype': _qtype(st), 'options': st.get('option_labels'), 'option_kinds': st.get('option_kinds'), 'checked': st.get('checked'), 'selects': st.get('selects'), 'text_inputs': st.get('text_inputs'), 'match_selects': st.get('match_selects'), 'dragdrop': st.get('dragdrop'), 'images': optimgs, 'question_image': qimg, 'question_image_b64': qb64, 'option_images_b64': ob64, 'timeleft': st.get('timeleft'), 'buttons': st.get('buttons'), 'url': st.get('url')}
         if self.vision_capable:
             v['ocr'] = None
         else:

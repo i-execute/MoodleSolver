@@ -331,10 +331,23 @@ class AIRunner:
         return r['choices'][0]['message']['content']
 
     def receive_ai_response(self, text):
+        t = text.strip()
+        if t.startswith('```'):
+            t = t.strip('`').removeprefix('json').strip()
+        if '\n{' in t and t.endswith('}'):
+            t = t[:t.find('\n{')] if t.find('{') > 0 else t
         try:
-            return json.loads(text.strip().strip('`').removeprefix('json').strip())
+            return json.loads(t)
         except Exception:
-            return {'action': None, 'raw': text}
+            pass
+        import re as _re
+        m = _re.search(r'\{[^{}]*\}', t, _re.S)
+        if m:
+            try:
+                return json.loads(m.group(0))
+            except Exception:
+                pass
+        return {'action': None, 'raw': text}
 
     async def execute_ai_response(self, resp):
         from .dbglog import dbg, err as _err
@@ -349,7 +362,10 @@ class AIRunner:
         elif a == 'text':
             await self.qapi.set_text(resp['value'], resp.get('index', 0))
         elif a == 'select':
-            for v, i in zip(resp.get('values', [resp.get('value')]), range(99)):
+            vals = resp.get('values') or [resp.get('value')] or []
+            if not vals or (len(vals) == 1 and not vals[0]):
+                vals = resp.get('labels') or []
+            for v, i in zip(vals, range(99)):
                 await self.qapi.set_select(v, i)
             st = await self.qapi.get_state() or {}
             if st.get('selects') and any(not s.get('value')
@@ -362,8 +378,13 @@ class AIRunner:
             return await self.qapi.submit_all()
         return resp.get('action')
 
-    async def loop(self, quiz_id, max_steps=200, answer_bank=None):
+    async def loop(self, quiz_id, max_steps=200, answer_bank=None,
+                    notes=None):
         info = await self.qapi.get_quiz_info(quiz_id)
+        if not info.get('available', True):
+            from .dbglog import dbg
+            dbg('quiz %s unavailable, exit loop' % quiz_id)
+            return {'done': 'quiz unavailable', 'status': info}
         if info.get('can_start'):
             await self.qapi.start_attempt(quiz_id)
         else:
@@ -392,7 +413,8 @@ class AIRunner:
                     image_mode='url' if self.image_base_url else 'b64',
                     image_base_url=self.image_base_url,
                     vision_capable=vc and bool(self.image_base_url))
-        w = HealthWatcher(j, quiz_id, poll=4.0, max_dead=4)
+        w = HealthWatcher(j, quiz_id, poll=1.0, max_dead=1)
+        w.start()
         notice = None
         empty = 0
         stuck = 0
@@ -418,15 +440,23 @@ class AIRunner:
             if stuck >= 4:
                 dbg('stuck on same question x%d -> submit' % stuck)
                 try:
+                    t = await self.qapi._tab()
+                    r = await t.evaluate("(() => { const q = document.querySelector('.que'); if (!q) return 'noque'; const els = [...q.querySelectorAll('input, select, textarea, span[contenteditable]')].slice(0, 14).map(e => ({tag: e.tagName, type: e.getAttribute('type') || '', name: e.getAttribute('name') || '', cls: (e.className || '').slice(0, 30)})); return JSON.stringify(els); })()")
+                    dbg('STUCKDOM %s' % str(r.get('result'))[:2000])
+                except Exception:
+                    pass
+                try:
                     fin = await j.handle({'action': 'submit'})
                     return {'done': 'auto-submit after stuck', 'submit': fin}
                 except Exception as e:
                     dbg('auto-submit failed: %s' % str(e)[:100])
+                w.stop()
+                return await self._final_result(quiz_id, w)
             if not (st.get('question') or st.get('images') or
                     st.get('selects') or st.get('text_inputs') or
                     st.get('error')):
                 empty += 1
-                if empty > 3:
+                if empty >= 1:
                     from .ctx import CtxAPI
                     ast = {}
                     try:
@@ -490,6 +520,8 @@ class AIRunner:
                     notice = w.notice()
                 continue
             prompt = AGENT_PROMPT
+            if notes:
+                prompt += '\nNotes: ' + str(notes) + '\n'
             if st.get('qtype') == 'unknown':
                 from .dbglog import dbg
                 dbg('unknown qtype -> generic answer allowed')
@@ -508,9 +540,15 @@ class AIRunner:
                 {'page': st.get('page'),
                  'question_hash': st.get('question_hash'),
                  'timeleft': st.get('timeleft'),
+                 'qtype': st.get('qtype'),
                  'q': st.get('question'),
                  'options': st.get('options'),
                  'checked': st.get('checked'),
+                 'selects': st.get('selects'),
+                 'match_selects': st.get('match_selects'),
+                 'dragdrop': st.get('dragdrop'),
+                 'text_inputs': st.get('text_inputs'),
+                 'text_count': st.get('text_count'),
                  'images': st.get('images')}, ensure_ascii=False)
             if st.get('images'):
                 try:
@@ -543,46 +581,24 @@ class AIRunner:
                 continue
             if act == 'selects_incomplete':
                 prompt2 = (AGENT_PROMPT + ' Some comboboxes are empty. '
-                           'Fill them or confirm blank ones. State: ' +
+                           'Fill them or confirm blank ones. Reply JSON '
+                           'with values matching every select index. '
+                           'State: ' +
                            json.dumps(st.get('selects'),
                                       ensure_ascii=False))
                 txt2 = await asyncio.to_thread(self.send_ai_request, prompt2)
                 resp2 = self.receive_ai_response(txt2)
                 act = await self.execute_ai_response(resp2)
+                if act == 'selects_incomplete':
+                    for i, s in enumerate(st.get('selects') or []):
+                        if not s.get('value') and s.get('options'):
+                            await self.qapi.set_select(
+                                s['options'][-1], i)
             if act in ('submit', 'next', None):
                 try:
                     await j.handle({'action': 'confirm'})
                 except Exception:
                     st = await w.reconnect()
                     notice = w.notice()
+        w.stop()
         return await self._final_result(quiz_id, w)
-
-    async def _final_result(self, quiz_id, w):
-        from .dbglog import dbg
-        res = None
-        for _ in range(4):
-            try:
-                res = await self.qapi.get_result(quiz_id)
-                if isinstance(res, str) and '/' in res:
-                    break
-                await asyncio.sleep(4)
-            except Exception as e:
-                dbg('get_result EXC %s' % str(e)[:80])
-                await w.reconnect()
-        try:
-            info = await self.qapi.get_quiz_info(quiz_id)
-        except Exception:
-            info = {}
-        out = {'quiz_id': quiz_id, 'grade': res,
-               'can_start': info.get('can_start'),
-               'can_continue': info.get('can_continue'),
-               'finished': not (info.get('can_start')
-                                or info.get('can_continue'))}
-        if isinstance(res, str) and '/' in res:
-            out['done'] = 'graded'
-        elif info.get('can_continue'):
-            out['done'] = 'attempt unfinished'
-        else:
-            out['done'] = 'no grade yet'
-        dbg('final: %r' % str(out)[:150])
-        return out

@@ -210,7 +210,6 @@ def pool_request(pool, messages, max_tokens=800, timeout=120,
                             else f'data:image/png;base64,{b64}'}})
         body = json.dumps({'model': p.model, 'max_tokens': max_tokens,
                            'temperature': 0,
-                           'reasoning_effort': 'none',
                            'messages': [{'role': 'user',
                                          'content': content}]}).encode()
         req = urllib.request.Request(

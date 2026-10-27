@@ -56,8 +56,13 @@ class HealthWatcher:
                     rl, ensure_ascii=False) + '. Проверь состояние '
                 'checked и отвечай текущий вопрос.')
             return st
-        st = await self.j.handle({'action': 'state',
-                                  'quiz_id': self.quiz_id})
+        try:
+            st = await self.j.handle({'action': 'state',
+                                      'quiz_id': self.quiz_id})
+        except Exception as e:
+            st = {'error': 'state after reconnect: ' + str(e)[:100],
+                  'relogin': rl}
+            return st
         self.last_notice = (
             'Сайт был недоступен. Последние изменения могли не '
             'сохраниться. Релогин: ' + json.dumps(

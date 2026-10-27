@@ -446,8 +446,16 @@ class AsyncMoodle:
         self.username = username
         self.password = password
         await self.start()
-        await self.close_stale()
-        await self.login(username, password)
+        for _ in range(3):
+            try:
+                await self.close_stale()
+                await self.login(username, password)
+                break
+            except Exception as e:
+                last = e
+                await asyncio.sleep(2)
+        else:
+            raise last
         if quiz_id:
             t = await self.new_tab(f'{self.site}/mod/quiz/view.php?id={quiz_id}')
             self.tab = t
